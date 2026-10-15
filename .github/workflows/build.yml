@@ -1,0 +1,55 @@
+name: Build KMX Remote
+
+on:
+  push:
+    branches: [main]
+    paths: ['kmx-src.zip', '.github/workflows/build.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack app source
+        run: unzip -o kmx-src.zip && ls -R KMXRemote | head -40
+
+      - name: Pick Xcode
+        run: |
+          ls /Applications | grep Xcode
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build (unsigned — SideStore signs it on the phone)
+        run: |
+          set -o pipefail
+          xcodebuild -project KMXRemote.xcodeproj -scheme KMXRemote -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*deprecated|BUILD" || true
+          test -d "build/Build/Products/Release-iphoneos/KMX Remote.app"
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R "build/Build/Products/Release-iphoneos/KMX Remote.app" Payload/
+          zip -qr KMXRemote.ipa Payload
+          ls -la KMXRemote.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KMXRemote-ipa
+          path: KMXRemote.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
