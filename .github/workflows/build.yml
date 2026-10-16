@@ -7,13 +7,49 @@ on:
   workflow_dispatch:
 
 jobs:
+  helper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack app source
+        run: unzip -o kmx-src.zip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build TV pointer helper
+        working-directory: android
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk ../KMXPointer.apk
+          ls -la ../KMXPointer.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KMXPointer-apk
+          path: KMXPointer.apk
+
   build:
+    needs: helper
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
       - name: Unpack app source
         run: unzip -o kmx-src.zip && ls -R KMXRemote | head -40
+
+      - name: Add TV helper to the app
+        uses: actions/download-artifact@v4
+        with:
+          name: KMXPointer-apk
+          path: KMXRemote/Resources
 
       - name: Pick Xcode
         run: |
@@ -26,7 +62,7 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
-      - name: Build (unsigned — SideStore signs it on the phone)
+      - name: Build (unsigned — signed when installed)
         run: |
           set -o pipefail
           xcodebuild -project KMXRemote.xcodeproj -scheme KMXRemote -configuration Release \
@@ -35,6 +71,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build | tee build.log | grep -E "error:|warning: .*deprecated|BUILD" || true
           test -d "build/Build/Products/Release-iphoneos/KMX Remote.app"
+          ls -la "build/Build/Products/Release-iphoneos/KMX Remote.app" | grep -i apk
 
       - name: Package IPA
         run: |
